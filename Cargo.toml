@@ -1,10 +1,8 @@
-[package]
-name = "chromedriver-memes"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = ["bin/cdp_stuff", "crates/cdp"]
+default-members = ["bin/cdp_stuff"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-headless_chrome = { git = "https://github.com/rust-headless-chrome/rust-headless-chrome" }
-anyhow = "1.0.69"
+# Like release, but with full debug symbols. Useful for e.g. `perf`.
+[profile.debug-fast]
+inherits = "release"
+debug = true

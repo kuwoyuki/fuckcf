@@ -1,4 +1,5 @@
 mod tab_evasions;
+mod connector;
 
 use std::{
     ffi::OsStr,

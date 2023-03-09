@@ -1,0 +1,23 @@
+[package]
+name = "cdp"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures-util = { version = "0.3", default-features = false, features = [
+    "sink",
+    "std",
+] }
+fxhash = "0.2"
+tachyonix = "0.2"
+tokio = { version = "1.26", features = ["full"] }
+tokio-tungstenite = "*"
+
+[dev-dependencies]
+criterion = "0.4"
+
+[[bench]]
+name = "criterion"
+harness = false
