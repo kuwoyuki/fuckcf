@@ -82,16 +82,19 @@ async fn main() -> Result<()> {
 
     let session = driver.attach_to_target(target_id).await;
     println!("{:?}", session);
-    // let _res = driver
-    //     .run_browser_command(&mut json!({
-    //         "method": "Target.attachToTarget",
-    //         "params": {
-    //             "targetId": target_id,
-    //             "flatten": true,
-    //         }
-    //     }))
-    //     .await
-    //     .unwrap();
+
+    let _res = driver
+        .run_session_command(
+            &session,
+            &mut json!({
+                "method": "Page.navigate",
+                "params": {
+                    "url": "https://google.com",
+                }
+            }),
+        )
+        .await
+        .unwrap();
     // println!("-> {:?}", res);
 
     // println!("hello world");

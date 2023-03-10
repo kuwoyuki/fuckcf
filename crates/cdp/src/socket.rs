@@ -16,51 +16,51 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use crate::Capabilities;
 
+type HashMapLock<T, U> = Arc<Mutex<FxHashMap<T, U>>>;
 // should we use a sync mutex for less overhead since this is not expected to block?
+// clients must provide unique 'id' for commands inside the session, but different sessions might use the same ids.
 /// id -> oneshot::Sender
-type RequestResolvers = Arc<Mutex<FxHashMap<u32, oneshot::Sender<Value>>>>;
-/// sessionId -> Session
-type SessionMap = Arc<Mutex<FxHashMap<String, Arc<Session>>>>;
-/// targetId -> oneshot::Sender
-type SessionsToAttach = Arc<Mutex<FxHashMap<String, oneshot::Sender<Arc<Session>>>>>;
+type Resolvers = HashMapLock<u32, oneshot::Sender<Value>>;
+/// id + sessionId -> Session
+type Sessions = HashMapLock<String, Arc<RequestCache>>;
+// type RequestCacheLock = Arc<Mutex<RequestCache>>;
 
 #[derive(Debug)]
-pub struct RequestStorage {
-    request_id: Arc<AtomicU32>,
-    request_map: RequestResolvers,
+pub struct Session {
+    id: String,
+    cache: Arc<RequestCache>,
 }
-impl RequestStorage {
+impl Session {
+    fn new(session_id: &str, cache: Arc<RequestCache>) -> Self {
+        Self {
+            id: session_id.to_string(),
+            cache,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct RequestCache {
+    id: Arc<AtomicU32>,
+    resolvers: Resolvers,
+}
+impl RequestCache {
     fn new() -> Self {
         Self {
-            request_id: Arc::new(AtomicU32::new(0)),
-            request_map: Arc::new(Mutex::new(FxHashMap::default())),
+            id: Arc::new(AtomicU32::new(0)),
+            resolvers: Arc::new(Mutex::new(FxHashMap::default())),
         }
     }
 
     pub fn next_request_id(&self) -> u32 {
-        self.request_id.fetch_add(1, Ordering::SeqCst)
-    }
-}
-
-#[derive(Debug)]
-pub struct Session {
-    // session_id: String,
-    storage: RequestStorage,
-}
-impl Session {
-    fn new() -> Self {
-        Self {
-            // session_id: session_id.to_string(),
-            storage: RequestStorage::new(),
-        }
+        self.id.fetch_add(1, Ordering::SeqCst)
     }
 }
 
 pub struct Connection {
     message_tx: Sender<Message>,
-    browser_storage: RequestStorage,
-    // sessions: SessionMap,
-    sessions_to_attach: SessionsToAttach,
+    root_browser_session: Arc<RequestCache>,
+    sessions: Sessions,
 }
 
 impl Connection {
@@ -73,12 +73,11 @@ impl Connection {
             capabilities.debugger_address
         };
 
-        let browser_storage = RequestStorage::new();
-        let sessions = Arc::new(Mutex::new(FxHashMap::default()));
-        let sessions_to_attach = Arc::new(Mutex::new(FxHashMap::default()));
+        let root_browser_session = Arc::new(RequestCache::new());
+        let sessions: Sessions = Arc::new(Mutex::new(FxHashMap::default()));
 
         // todo: set cap
-        let (tx, rx) = tachyonix::channel(3);
+        let (message_tx, rx) = tachyonix::channel(3);
         let (ws_stream, ..) = connect_async(ws_address).await.unwrap();
         let (write, read) = ws_stream.split();
 
@@ -87,24 +86,22 @@ impl Connection {
         // ws -> oneshot
         tokio::spawn(Self::handle_messages(
             read,
-            browser_storage.request_map.clone(),
+            root_browser_session.clone(),
             sessions.clone(),
-            sessions_to_attach.clone(),
         ));
 
         Self {
-            sessions_to_attach,
-            browser_storage,
-            message_tx: tx,
-            // sessions,
+            message_tx,
+            root_browser_session,
+            sessions,
         }
     }
 
     async fn handle_messages(
         mut read_stream: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-        request_map: RequestResolvers,
-        sessions: SessionMap,
-        sessions_to_attach: SessionsToAttach,
+        root_browser_session: Arc<RequestCache>,
+        _sessions: Sessions,
+        // sessions_to_attach: SessionsToAttach,
     ) {
         while let Some(res) = read_stream.next().await {
             match res {
@@ -119,49 +116,50 @@ impl Connection {
                         match method {
                             "Target.attachedToTarget" => {
                                 log::debug!("Target.attachedToTarget");
-                                let tid = msg["params"]["targetInfo"]["targetId"].as_str().unwrap();
-                                let sid = msg["params"]["sessionId"].as_str().unwrap();
-                                log::debug!("{}", sid);
-                                // sessions_to_attach is a targetId -> oneshot mapping
-                                let sender = sessions_to_attach.lock().await.remove(tid).unwrap();
-                                let session = Arc::new(Session::new());
+                                // let tid = msg["params"]["targetInfo"]["targetId"].as_str().unwrap();
+                                // let sid = msg["params"]["sessionId"].as_str().unwrap();
+                                // log::debug!("{}", sid);
+                                // // sessions_to_attach is a targetId -> oneshot mapping
+                                // let sender = sessions_to_attach.lock().await.remove(tid).unwrap();
+                                // let session = Arc::new(Session::new());
 
-                                sessions
-                                    .lock()
-                                    .await
-                                    .insert(sid.to_string(), session.clone());
-                                sender.send(session).unwrap();
+                                // sessions
+                                //     .lock()
+                                //     .await
+                                //     .insert(sid.to_string(), session.clone());
+                                // sender.send(session).unwrap();
                             }
                             "Target.detachedFromTarget" => {
                                 log::debug!("Target.detachedFromTarget");
-                                todo!()
+                                // todo!()
                             }
                             &_ => (),
                         };
                     }
-                    if let Some(session_id) = msg["sessionId"].as_str() {
+                    if let Some(_session_id) = msg["sessionId"].as_str() {
                         // todo: unnest and dry or sth
                         if let Some(id) = msg["id"].as_u64() {
                             let id = id as u32;
                             // let mut request_map = request_map.lock().await;
 
-                            let session = sessions.lock().await;
+                            // _sessions.lock().await;
+                            let session = _sessions.lock().await;
                             let session = session
-                                .get(session_id)
+                                .get(_session_id)
                                 .expect("received an event for an unknown session");
 
-                            let mut rm = session.storage.request_map.lock().await;
+                            let mut rm = session.resolvers.lock().await;
 
                             // remove to take ownership
                             let sender = rm.remove(&id).unwrap();
                             sender.send(msg).unwrap();
                         }
-                        todo!()
+                        // todo!()
                     } else if let Some(id) = msg["id"].as_u64() {
                         let id = id as u32;
-                        let mut request_map = request_map.lock().await;
+                        let mut rbs = root_browser_session.resolvers.lock().await;
                         // remove to take ownership
-                        let sender = request_map.remove(&id).unwrap();
+                        let sender = rbs.remove(&id).unwrap();
                         sender.send(msg).unwrap();
                     }
                 }
@@ -174,11 +172,11 @@ impl Connection {
         &self,
         command: &mut Value,
     ) -> Result<Value, oneshot::error::RecvError> {
-        let next_request_id = self.browser_storage.next_request_id();
+        let next_request_id = self.root_browser_session.next_request_id();
         command["id"] = next_request_id.into();
 
         let (tx, rx) = oneshot::channel();
-        let mut rs = self.browser_storage.request_map.lock().await;
+        let mut rs = self.root_browser_session.resolvers.lock().await;
         rs.insert(next_request_id, tx);
         drop(rs);
 
@@ -194,18 +192,19 @@ impl Connection {
 
     pub async fn run_session_command(
         &self,
-        session: &Arc<Session>,
+        session: &Session,
         command: &mut Value,
     ) -> Result<Value, oneshot::error::RecvError> {
-        let next_request_id = session.storage.next_request_id();
+        let next_request_id = session.cache.next_request_id();
         command["id"] = next_request_id.into();
+        command["sessionId"] = session.id.to_string().into();
 
         let (tx, rx) = oneshot::channel();
-        let mut st = session.storage.request_map.lock().await;
+        let mut st = session.cache.resolvers.lock().await;
         st.insert(next_request_id, tx);
         drop(st);
 
-        log::debug!("-> {:?}", command);
+        log::debug!("-> (session) {:?}", command);
 
         self.message_tx
             .send(Message::Text(command.to_string()))
@@ -215,12 +214,11 @@ impl Connection {
         rx.await
     }
 
-    pub async fn attach_to_target(
-        &self,
-        target_id: &str,
-    ) -> Result<Arc<Session>, oneshot::error::RecvError> {
+    pub async fn attach_to_target(&self, target_id: &str) -> Session {
+        // ) -> Result<Arc<Session>, oneshot::error::RecvError> {
+        let next_request_id = self.root_browser_session.next_request_id();
         let command = json!({
-            "id": self.browser_storage.next_request_id(),
+            "id": next_request_id,
             "method": "Target.attachToTarget",
             "params": {
                 "targetId": target_id,
@@ -228,18 +226,29 @@ impl Connection {
             }
         });
         let (tx, rx) = oneshot::channel();
-        let mut sessions_to_attach = self.sessions_to_attach.lock().await;
-        sessions_to_attach.insert(target_id.to_string(), tx);
-        drop(sessions_to_attach);
+        let mut rs = self.root_browser_session.resolvers.lock().await;
+        // sessions_to_attach.insert(target_id.to_string(), tx);
+        rs.insert(next_request_id, tx);
+        drop(rs);
 
-        log::debug!("-> {:?}", command);
+        log::debug!("-> (attach_to_target) {:?}", command);
 
         self.message_tx
             .send(Message::Text(command.to_string()))
             .await
             .unwrap();
 
-        rx.await
+        // Object {"id": Number(1), "result": Object {"sessionId": String("75D8023EC2DD8319DCF549B62177D600")}}
+        // todo: handle recv error and sid error
+        let v = rx.await.unwrap();
+        let sid = v["result"]["sessionId"].as_str().unwrap();
+        let mut l = self.sessions.lock().await;
+        let req_cache = Arc::new(RequestCache::new());
+        l.insert(sid.to_string(), req_cache.clone());
+        drop(l);
+        // todo: an actual return type ;)
+        Session::new(sid, req_cache)
+        // (sid.to_string(), req_cache)
     }
 
     // todo: args
