@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1.26.0", features = ["full"] }
 cdp = { path = "../../crates/cdp" }
+serde_json = "1.0.94"
+anyhow = "1.0.69"

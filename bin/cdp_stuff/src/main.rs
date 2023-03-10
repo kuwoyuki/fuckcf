@@ -1,8 +1,12 @@
+use std::io;
+
+use anyhow::Result;
 use cdp::socket::ChromiumBrowser;
 use cdp::Capabilities;
+use serde_json::json;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     let mut caps = Capabilities::new();
     caps.set_binary("/home/mira/Projects/misc/chromium/src/out/Default/chrome");
 
@@ -38,15 +42,27 @@ async fn main() {
         "--use-mock-keychain",
         "--start-maximized",
         // headless=new also passes datadome
-        "--headless=new",
-        "--remote-debugging-port=9222",
+        // "--headless=new",
+        "--remote-debugging-port=0",
         "--enable-webgl",
     ].map(String::from).to_vec();
-    // caps.args = args;
+    caps.args = args;
 
     // DevTools listening on ws://127.0.0.1:34327/devtools/browser/ab89d15b-53ac-4f64-91ce-630661572e91
     let driver = ChromiumBrowser::new(caps).await;
+    let mut message = json!({
+        "id": 1,
+        "method": "Page.navigate",
+        "params": {
+        "url": "https://google.com",
+        }
+    });
 
-    // foo();
-    println!("hello world")
+    let res = driver.run_command(&mut message).await.unwrap();
+    println!("{:?}", res);
+
+    // println!("hello world");
+    io::stdin().read_line(&mut String::new()).unwrap();
+
+    Ok(())
 }
