@@ -1,12 +1,14 @@
 use std::io;
 
 use anyhow::Result;
-use cdp::socket::ChromiumBrowser;
+use cdp::socket::Connection;
 use cdp::Capabilities;
 use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
+
     let mut caps = Capabilities::new();
     caps.set_binary("/home/mira/Projects/misc/chromium/src/out/Default/chrome");
 
@@ -43,23 +45,54 @@ async fn main() -> Result<()> {
         "--start-maximized",
         // headless=new also passes datadome
         // "--headless=new",
-        "--remote-debugging-port=0",
+        // "--remote-debugging-port=9222",
         "--enable-webgl",
     ].map(String::from).to_vec();
     caps.args = args;
+    caps.disable_launch();
+    caps.set_debugger_address(
+        "ws://127.0.0.1:43273/devtools/browser/fd6e241a-0205-4082-bc26-088ada23a44b",
+    );
 
     // DevTools listening on ws://127.0.0.1:34327/devtools/browser/ab89d15b-53ac-4f64-91ce-630661572e91
-    let driver = ChromiumBrowser::new(caps).await;
-    let mut message = json!({
-        "id": 1,
-        "method": "Page.navigate",
-        "params": {
-        "url": "https://google.com",
-        }
-    });
+    let driver = Connection::new(caps).await;
+    // let mut message = ;
 
-    let res = driver.run_command(&mut message).await.unwrap();
-    println!("{:?}", res);
+    let res = driver
+        .run_browser_command(&mut json!({
+            "method": "Target.getTargets",
+        }))
+        .await
+        .unwrap();
+    // println!("-> {:?}", res);
+
+    let target_id = res["result"]["targetInfos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|x| {
+            if x["type"].as_str().unwrap() == "page" {
+                Some(x["targetId"].as_str().unwrap())
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    println!("{:?}", target_id);
+
+    let session = driver.attach_to_target(target_id).await;
+    println!("{:?}", session);
+    // let _res = driver
+    //     .run_browser_command(&mut json!({
+    //         "method": "Target.attachToTarget",
+    //         "params": {
+    //             "targetId": target_id,
+    //             "flatten": true,
+    //         }
+    //     }))
+    //     .await
+    //     .unwrap();
+    // println!("-> {:?}", res);
 
     // println!("hello world");
     io::stdin().read_line(&mut String::new()).unwrap();

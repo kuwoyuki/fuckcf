@@ -25,6 +25,12 @@ pub struct Capabilities {
     pub launch: bool,
 }
 
+impl Default for Capabilities {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Capabilities {
     pub fn new() -> Self {
         Capabilities {
@@ -53,5 +59,9 @@ impl Capabilities {
 
     pub fn disable_launch(&mut self) {
         self.launch = false
+    }
+
+    pub fn set_debugger_address(&mut self, debugger_address: &str) {
+        self.debugger_address = debugger_address.to_string()
     }
 }

@@ -10,3 +10,5 @@ tokio = { version = "1.26.0", features = ["full"] }
 cdp = { path = "../../crates/cdp" }
 serde_json = "1.0.94"
 anyhow = "1.0.69"
+env_logger = "0.10.0"
+log = "0.4.17"
